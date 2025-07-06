@@ -5,10 +5,11 @@ import markdown2
 import warnings
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-from tkhtmlview import HTMLLabel
+from tkinterweb import HtmlFrame
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 import base64
 from io import BytesIO
+import tempfile
 
 # Suppress the specific warning from mermaid.py
 warnings.filterwarnings("ignore", message="IPython is not installed. Mermaidjs magic function is not available.")
@@ -21,7 +22,6 @@ class App(ttk.Window):
         self.title("MD Viewer")
         self.geometry("1200x800")
 
-        self.font_size = 10
         self.current_file_path = None
 
         # Set a larger default font for UI elements
@@ -81,14 +81,8 @@ class App(ttk.Window):
         # Right panel for the content
         content_frame = ttk.Frame(paned_window, padding="5")
         
-        # Create a scrollbar
-        scrollbar = ttk.Scrollbar(content_frame)
-        scrollbar.pack(side="right", fill="y")
-
-        self.html_view = HTMLLabel(content_frame, background="white", yscrollcommand=scrollbar.set)
+        self.html_view = HtmlFrame(content_frame, messages_enabled=False)
         self.html_view.pack(expand=True, fill="both")
-        
-        scrollbar.config(command=self.html_view.yview)
 
         paned_window.add(content_frame, weight=3)
 
@@ -103,13 +97,10 @@ class App(ttk.Window):
         minus_button.pack(side="left")
 
     def increase_font_size(self):
-        self.font_size += 1
-        self.refresh_html_view()
+        self.html_view.zoom_in()
 
     def decrease_font_size(self):
-        if self.font_size > 6:
-            self.font_size -= 1
-            self.refresh_html_view()
+        self.html_view.zoom_out()
 
     def refresh_html_view(self):
         if self.current_file_path:
@@ -152,11 +143,13 @@ class App(ttk.Window):
     def populate_tree(self, path):
         for i in self.tree.get_children():
             self.tree.delete(i)
-        
+
+        ignore_dirs = ['node_modules', '.git', '.venv', '__pycache__']
+
         def _has_md_files_recursive(dir_path):
             for p in os.listdir(dir_path):
                 pt = os.path.join(dir_path, p)
-                if os.path.isdir(pt):
+                if os.path.isdir(pt) and p not in ignore_dirs and not p.startswith('.'):
                     if _has_md_files_recursive(pt):
                         return True
                 elif p.endswith(".md"):
@@ -167,7 +160,7 @@ class App(ttk.Window):
             entries = sorted(os.listdir(dir_path), key=lambda x: (os.path.isfile(os.path.join(dir_path, x)), x))
             for p in entries:
                 pt = os.path.join(dir_path, p)
-                if os.path.isdir(pt):
+                if os.path.isdir(pt) and p not in ignore_dirs and not p.startswith('.'):
                     if _has_md_files_recursive(pt):
                         node = self.tree.insert(parent, "end", text=p, open=False)
                         _populate_tree(node, pt)
@@ -198,7 +191,16 @@ class App(ttk.Window):
                 code = match.group(1)
                 try:
                     m = mermaid_lib.Mermaid(code)
-                    png_data = m.to_png()
+                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+                        temp_path = temp_file.name
+                    
+                    m.to_png(temp_path)
+                    
+                    with open(temp_path, "rb") as f:
+                        png_data = f.read()
+                    
+                    os.remove(temp_path)
+
                     img_base64 = base64.b64encode(png_data).decode('utf-8')
                     placeholder = f"<!-- mermaid-placeholder-{len(mermaid_images)} -->"
                     mermaid_images[placeholder] = f"data:image/png;base64,{img_base64}"
@@ -220,40 +222,53 @@ class App(ttk.Window):
 
             # Add GitHub-like styling
             styled_html = f"""
-            <style>
-                body {{ 
-                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-                    font-size: {self.font_size}pt; 
-                    line-height: 1.6; 
-                    color: #24292e;
-                    background-color: #ffffff;
-                }}
-                h1, h2, h3, h4, h5, h6 {{
-                    margin-top: 24px;
-                    margin-bottom: 16px;
-                    font-weight: 600;
-                    line-height: 1.25;
-                }}
-                h1 {{ font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: .3em;}}
-                h2 {{ font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: .3em;}}
-                h3 {{ font-size: 1.25em; }}
-                a {{ color: #0366d6; text-decoration: none; }}
-                a:hover {{ text-decoration: underline; }}
-                pre {{ background-color: #f6f8fa; padding: 16px; overflow: auto; font-size: 85%; line-height: 1.45; border-radius: 6px; }}
-                code {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace; font-size: 85%; }}
-                pre > code {{ font-size: 100%; }}
-                table {{ border-collapse: collapse; width: 100%; display: block; overflow: auto;}}
-                th, td {{ border: 1px solid #dfe2e5; padding: 6px 13px; }}
-                th {{ font-weight: 600; background-color: #f6f8fa; }}
-                img {{ max-width: 100%; height: auto; background-color: #ffffff; }}
-                blockquote {{ color: #6a737d; border-left: .25em solid #dfe2e5; padding: 0 1em; margin-left: 0; }}
-            </style>
-            {html_content}
+            <html>
+            <head>
+                <style>
+                    body {{
+                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+                        line-height: 1.6;
+                        color: #24292e;
+                        background-color: #ffffff;
+                        word-wrap: break-word;
+                    }}
+                    .container {{
+                        max-width: 800px;
+                        margin: 0 auto;
+                        padding: 20px;
+                    }}
+                    h1, h2, h3, h4, h5, h6 {{
+                        margin-top: 24px;
+                        margin-bottom: 16px;
+                        font-weight: 600;
+                        line-height: 1.25;
+                    }}
+                    h1 {{ font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: .3em;}}
+                    h2 {{ font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: .3em;}}
+                    h3 {{ font-size: 1.25em; }}
+                    a {{ color: #0366d6; text-decoration: none; }}
+                    a:hover {{ text-decoration: underline; }}
+                    pre {{ background-color: #f6f8fa; padding: 16px; overflow: auto; font-size: 85%; line-height: 1.45; border-radius: 6px; }}
+                    code {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace; font-size: 85%; }}
+                    pre > code {{ font-size: 100%; }}
+                    table {{ border-collapse: collapse; width: 100%; display: block; overflow: auto;}}
+                    th, td {{ border: 1px solid #dfe2e5; padding: 6px 13px; }}
+                    th {{ font-weight: 600; background-color: #f6f8fa; }}
+                    img {{ max-width: 100%; height: auto; background-color: #ffffff; }}
+                    blockquote {{ color: #6a737d; border-left: .25em solid #dfe2e5; padding: 0 1em; margin-left: 0; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    {html_content}
+                </div>
+            </body>
+            </html>
             """
-            self.html_view.set_html(styled_html)
+            self.html_view.load_html(styled_html)
 
         except Exception as e:
-            self.html_view.set_html(f"<h1>Error</h1><p>Failed to render file: {e}</p>")
+            self.html_view.load_html(f"<h1>Error</h1><p>Failed to render file: {e}</p>")
 
 if __name__ == "__main__":
     app = App()
