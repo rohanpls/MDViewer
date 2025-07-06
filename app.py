@@ -2,19 +2,52 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import os
 import markdown2
-import mermaid as mermaid_lib
-from io import BytesIO
-from PIL import Image, ImageTk
+import warnings
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+from tkhtmlview import HTMLLabel
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 import base64
+from io import BytesIO
 
-class App(tk.Tk):
+# Suppress the specific warning from mermaid.py
+warnings.filterwarnings("ignore", message="IPython is not installed. Mermaidjs magic function is not available.")
+
+import mermaid as mermaid_lib
+
+class App(ttk.Window):
     def __init__(self):
-        super().__init__()
+        super().__init__(themename="litera")
         self.title("MD Viewer")
-        self.geometry("1024x768")
+        self.geometry("1200x800")
 
-        # Create the main layout
+        self.font_size = 10
+        self.current_file_path = None
+
+        # Set a larger default font for UI elements
+        style = ttk.Style()
+        style.configure("Treeview", font=("Segoe UI", 12), rowheight=25)
+        style.configure("Treeview.Heading", font=("Segoe UI", 12, "bold"))
+        
+        self.photo = None
+        self.set_app_icon()
         self.create_widgets()
+
+    def set_app_icon(self):
+        try:
+            image = Image.new("RGB", (256, 256), "#4A7FF2")
+            draw = ImageDraw.Draw(image)
+            try:
+                font = ImageFont.truetype("courbd.ttf", 160)
+            except IOError:
+                font = ImageFont.load_default()
+            
+            draw.text((128, 128), "MD", fill="white", font=font, anchor="mm")
+
+            self.photo = ImageTk.PhotoImage(image)
+            self.iconphoto(False, self.photo)
+        except Exception as e:
+            print(f"Error creating app icon: {e}")
 
     def create_widgets(self):
         # Menu
@@ -30,10 +63,6 @@ class App(tk.Tk):
         self.menu.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="About", command=self.show_about)
 
-    def show_about(self):
-        about_message = "MDViewer\n\nCreated by @rohanpls\nhttps://github.com/rohanpls"
-        tk.messagebox.showinfo("About MDViewer", about_message)
-
         # Main container
         main_frame = ttk.Frame(self, padding="5")
         main_frame.pack(expand=True, fill="both")
@@ -43,17 +72,77 @@ class App(tk.Tk):
         paned_window.pack(expand=True, fill="both")
 
         # Left panel for the directory tree
-        self.tree_frame = ttk.Frame(paned_window, padding="5")
-        self.tree = ttk.Treeview(self.tree_frame)
+        tree_frame = ttk.Frame(paned_window, padding="5")
+        self.tree = ttk.Treeview(tree_frame, bootstyle="info")
         self.tree.pack(expand=True, fill="both")
         self.tree.bind("<Double-1>", self.on_tree_select)
-        paned_window.add(self.tree_frame, weight=1)
+        paned_window.add(tree_frame, weight=1)
 
         # Right panel for the content
-        self.content_frame = ttk.Frame(paned_window, padding="5")
-        self.content_text = tk.Text(self.content_frame, wrap="word", state="disabled", padx=10, pady=10)
-        self.content_text.pack(expand=True, fill="both")
-        paned_window.add(self.content_frame, weight=3)
+        content_frame = ttk.Frame(paned_window, padding="5")
+        
+        # Create a scrollbar
+        scrollbar = ttk.Scrollbar(content_frame)
+        scrollbar.pack(side="right", fill="y")
+
+        self.html_view = HTMLLabel(content_frame, background="white", yscrollcommand=scrollbar.set)
+        self.html_view.pack(expand=True, fill="both")
+        
+        scrollbar.config(command=self.html_view.yview)
+
+        paned_window.add(content_frame, weight=3)
+
+        # Font size controls
+        font_control_frame = ttk.Frame(content_frame)
+        font_control_frame.place(relx=1.0, rely=1.0, x=-10, y=-10, anchor="se")
+
+        plus_button = ttk.Button(font_control_frame, text="+", width=3, command=self.increase_font_size, bootstyle="secondary")
+        plus_button.pack(side="left", padx=2)
+
+        minus_button = ttk.Button(font_control_frame, text="-", width=3, command=self.decrease_font_size, bootstyle="secondary")
+        minus_button.pack(side="left")
+
+    def increase_font_size(self):
+        self.font_size += 1
+        self.refresh_html_view()
+
+    def decrease_font_size(self):
+        if self.font_size > 6:
+            self.font_size -= 1
+            self.refresh_html_view()
+
+    def refresh_html_view(self):
+        if self.current_file_path:
+            self.show_file_content(self.current_file_path)
+
+    def show_about(self):
+        about_win = tk.Toplevel(self)
+        about_win.title("About MDViewer")
+        about_win.geometry("300x200")
+        about_win.resizable(False, False)
+        if self.photo:
+            about_win.iconphoto(False, self.photo)
+
+        main_frame = ttk.Frame(about_win, padding=20)
+        main_frame.pack(expand=True, fill="both")
+
+        about_label = ttk.Label(main_frame, text="MDViewer", font=("Segoe UI", 16, "bold"))
+        about_label.pack(pady=5)
+        
+        creator_label = ttk.Label(main_frame, text="Created by @rohanpls")
+        creator_label.pack()
+
+        link_label = ttk.Label(main_frame, text="https://github.com/rohanpls", foreground="blue", cursor="hand2")
+        link_label.pack()
+        import webbrowser
+        link_label.bind("<Button-1>", lambda e: webbrowser.open_new("https://github.com/rohanpls"))
+
+        ok_button = ttk.Button(main_frame, text="OK", command=about_win.destroy, bootstyle="primary")
+        ok_button.pack(pady=20)
+        
+        about_win.transient(self)
+        about_win.grab_set()
+        self.wait_window(about_win)
 
     def open_directory(self):
         path = filedialog.askdirectory()
@@ -64,14 +153,24 @@ class App(tk.Tk):
         for i in self.tree.get_children():
             self.tree.delete(i)
         
-        self.path = path
-        
-        def _populate_tree(parent, path):
-            for p in os.listdir(path):
-                pt = os.path.join(path, p)
+        def _has_md_files_recursive(dir_path):
+            for p in os.listdir(dir_path):
+                pt = os.path.join(dir_path, p)
                 if os.path.isdir(pt):
-                    node = self.tree.insert(parent, "end", text=p, open=False)
-                    _populate_tree(node, pt)
+                    if _has_md_files_recursive(pt):
+                        return True
+                elif p.endswith(".md"):
+                    return True
+            return False
+
+        def _populate_tree(parent, dir_path):
+            entries = sorted(os.listdir(dir_path), key=lambda x: (os.path.isfile(os.path.join(dir_path, x)), x))
+            for p in entries:
+                pt = os.path.join(dir_path, p)
+                if os.path.isdir(pt):
+                    if _has_md_files_recursive(pt):
+                        node = self.tree.insert(parent, "end", text=p, open=False)
+                        _populate_tree(node, pt)
                 elif p.endswith(".md"):
                     self.tree.insert(parent, "end", text=p, values=[pt])
 
@@ -79,64 +178,82 @@ class App(tk.Tk):
         _populate_tree(root_node, path)
 
     def on_tree_select(self, event):
-        selected_item = self.tree.selection()[0]
-        file_path = self.tree.item(selected_item, "values")
-        if file_path and file_path[0].endswith(".md"):
-            self.show_file_content(file_path[0])
+        selected_item = self.tree.selection()
+        if not selected_item:
+            return
+        file_path_values = self.tree.item(selected_item[0], "values")
+        if file_path_values and file_path_values[0].endswith(".md"):
+            self.current_file_path = file_path_values[0]
+            self.show_file_content(self.current_file_path)
 
     def show_file_content(self, file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 md_content = f.read()
-            
-            self.content_text.config(state="normal")
-            self.content_text.delete(1.0, tk.END)
 
-            # Find and render Mermaid diagrams
+            # Process Mermaid diagrams first
             import re
-            mermaid_blocks = re.findall(r"```mermaid(.*?)```", md_content, re.DOTALL)
-            
-            if mermaid_blocks:
-                parts = re.split(r"```mermaid.*?```", md_content, flags=re.DOTALL)
-                for i, part in enumerate(parts):
-                    html_part = markdown2.markdown(part, extras=["fenced-code-blocks", "tables"])
-                    self.insert_html(html_part)
-                    
-                    if i < len(mermaid_blocks):
-                        self.insert_mermaid_diagram(mermaid_blocks[i])
-            else:
-                html_content = markdown2.markdown(md_content, extras=["fenced-code-blocks", "tables"])
-                self.insert_html(html_content)
+            mermaid_images = {}
+            def replace_mermaid_block(match):
+                code = match.group(1)
+                try:
+                    m = mermaid_lib.Mermaid(code)
+                    png_data = m.to_png()
+                    img_base64 = base64.b64encode(png_data).decode('utf-8')
+                    placeholder = f"<!-- mermaid-placeholder-{len(mermaid_images)} -->"
+                    mermaid_images[placeholder] = f"data:image/png;base64,{img_base64}"
+                    return f'<img src="{placeholder}">'
+                except Exception as e:
+                    return f"<pre>Mermaid Rendering Failed: {e}</pre>"
 
-            self.content_text.config(state="disabled")
+            md_content_with_placeholders = re.sub(r"```mermaid(.*?)```", replace_mermaid_block, md_content, flags=re.DOTALL)
+            
+            # Convert Markdown to HTML
+            html_content = markdown2.markdown(
+                md_content_with_placeholders, 
+                extras=["fenced-code-blocks", "tables", "cuddled-lists", "strike", "code-friendly"]
+            )
+
+            # Replace placeholders with actual image data
+            for placeholder, img_data in mermaid_images.items():
+                html_content = html_content.replace(f'src="{placeholder}"', f'src="{img_data}"')
+
+            # Add GitHub-like styling
+            styled_html = f"""
+            <style>
+                body {{ 
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+                    font-size: {self.font_size}pt; 
+                    line-height: 1.6; 
+                    color: #24292e;
+                    background-color: #ffffff;
+                }}
+                h1, h2, h3, h4, h5, h6 {{
+                    margin-top: 24px;
+                    margin-bottom: 16px;
+                    font-weight: 600;
+                    line-height: 1.25;
+                }}
+                h1 {{ font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: .3em;}}
+                h2 {{ font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: .3em;}}
+                h3 {{ font-size: 1.25em; }}
+                a {{ color: #0366d6; text-decoration: none; }}
+                a:hover {{ text-decoration: underline; }}
+                pre {{ background-color: #f6f8fa; padding: 16px; overflow: auto; font-size: 85%; line-height: 1.45; border-radius: 6px; }}
+                code {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace; font-size: 85%; }}
+                pre > code {{ font-size: 100%; }}
+                table {{ border-collapse: collapse; width: 100%; display: block; overflow: auto;}}
+                th, td {{ border: 1px solid #dfe2e5; padding: 6px 13px; }}
+                th {{ font-weight: 600; background-color: #f6f8fa; }}
+                img {{ max-width: 100%; height: auto; background-color: #ffffff; }}
+                blockquote {{ color: #6a737d; border-left: .25em solid #dfe2e5; padding: 0 1em; margin-left: 0; }}
+            </style>
+            {html_content}
+            """
+            self.html_view.set_html(styled_html)
 
         except Exception as e:
-            self.content_text.config(state="normal")
-            self.content_text.delete(1.0, tk.END)
-            self.content_text.insert(tk.END, f"Error: {e}")
-            self.content_text.config(state="disabled")
-
-    def insert_html(self, html):
-        # This is still a simplified rendering. A proper HTML widget would be better.
-        self.content_text.insert(tk.END, html)
-
-
-    def insert_mermaid_diagram(self, code):
-        try:
-            m = mermaid_lib.Mermaid(code)
-            # The library uses mermaid.ink to render, which returns PNG data
-            png_data = m.to_png()
-            
-            image = Image.open(BytesIO(png_data))
-            photo = ImageTk.PhotoImage(image)
-            
-            # Keep a reference to the image to prevent garbage collection
-            self.content_text.image_create(tk.END, image=photo)
-            self.content_text.insert(tk.END, '\n') # Add a newline after the image
-            self.content_text.image = photo
-
-        except Exception as e:
-            self.content_text.insert(tk.END, f"\n[Mermaid Rendering Failed: {e}]\n")
+            self.html_view.set_html(f"<h1>Error</h1><p>Failed to render file: {e}</p>")
 
 if __name__ == "__main__":
     app = App()
