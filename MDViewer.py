@@ -28,7 +28,7 @@ class App(ttk.Window):
         self.ignore_dirs = ['node_modules', '.git', '.venv', '__pycache__']
 
         # Set a larger default font for UI elements
-        self.style.configure("Treeview", font=("Segoe UI", 12), rowheight=25)
+        self.style.configure("Treeview", font=("Segoe UI", 12), rowheight=30)
         self.style.configure("Treeview.Heading", font=("Segoe UI", 12, "bold"))
         
         self.photo = None
@@ -94,7 +94,13 @@ class App(ttk.Window):
         # Left panel for the directory tree
         tree_frame = ttk.Frame(paned_window, padding="5")
         self.tree = ttk.Treeview(tree_frame, bootstyle="info")
-        self.tree.pack(expand=True, fill="both")
+        
+        # Add a scrollbar to the treeview
+        tree_scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        tree_scrollbar.pack(side="right", fill="y")
+        self.tree.configure(yscrollcommand=tree_scrollbar.set)
+        
+        self.tree.pack(expand=True, fill="both", side="left")
         self.tree.bind("<Double-1>", self.on_tree_select)
         paned_window.add(tree_frame, weight=1)
 
