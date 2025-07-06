@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageTk
 import base64
 from io import BytesIO
 import tempfile
+import re
 
 # Suppress the specific warning from mermaid.py
 warnings.filterwarnings("ignore", message="IPython is not installed. Mermaidjs magic function is not available.")
@@ -24,11 +25,11 @@ class App(ttk.Window):
 
         self.font_size = 12
         self.current_file_path = None
+        self.ignore_dirs = ['node_modules', '.git', '.venv', '__pycache__']
 
         # Set a larger default font for UI elements
-        style = ttk.Style()
-        style.configure("Treeview", font=("Segoe UI", 12), rowheight=25)
-        style.configure("Treeview.Heading", font=("Segoe UI", 12, "bold"))
+        self.style.configure("Treeview", font=("Segoe UI", 12), rowheight=25)
+        self.style.configure("Treeview.Heading", font=("Segoe UI", 12, "bold"))
         
         self.photo = None
         self.set_app_icon()
@@ -38,9 +39,15 @@ class App(ttk.Window):
         try:
             image = Image.new("RGB", (256, 256), "#4A7FF2")
             draw = ImageDraw.Draw(image)
-            try:
-                font = ImageFont.truetype("courbd.ttf", 160)
-            except IOError:
+            font_path = None
+            for f_name in ["courbd.ttf", "DejaVuSansMono-Bold.ttf", "LiberationMono-Bold.ttf", "FreeMonoBold.ttf"]:
+                try:
+                    font = ImageFont.truetype(f_name, 160)
+                    font_path = f_name
+                    break
+                except IOError:
+                    continue
+            if not font_path:
                 font = ImageFont.load_default()
             
             draw.text((128, 128), "MD", fill="white", font=font, anchor="mm")
@@ -72,6 +79,18 @@ class App(ttk.Window):
         paned_window = ttk.PanedWindow(main_frame, orient="horizontal")
         paned_window.pack(expand=True, fill="both")
 
+        # Theme toggle
+        self.style.configure("TCheckbutton", font=("Segoe UI", 12))
+        self.theme_var = tk.BooleanVar(value=False) # False for light, True for dark
+        theme_toggle = ttk.Checkbutton(
+            main_frame, 
+            text="🌙", 
+            variable=self.theme_var, 
+            command=self.toggle_theme,
+            bootstyle="round-toggle"
+        )
+        theme_toggle.place(relx=1.0, rely=0, x=-10, y=10, anchor="ne")
+
         # Left panel for the directory tree
         tree_frame = ttk.Frame(paned_window, padding="5")
         self.tree = ttk.Treeview(tree_frame, bootstyle="info")
@@ -97,6 +116,13 @@ class App(ttk.Window):
         minus_button = ttk.Button(font_control_frame, text="-", width=3, command=self.decrease_font_size, bootstyle="secondary")
         minus_button.pack(side="left")
 
+    def toggle_theme(self):
+        if self.theme_var.get():
+            self.style.theme_use("darkly")
+        else:
+            self.style.theme_use("litera")
+        self.refresh_html_view()
+
     def increase_font_size(self):
         self.font_size += 1
         self.refresh_html_view()
@@ -115,8 +141,7 @@ class App(ttk.Window):
         about_win.title("About MDViewer")
         about_win.geometry("300x200")
         about_win.resizable(False, False)
-        if self.photo:
-            about_win.iconphoto(False, self.photo)
+        about_win.iconphoto(False, self.photo)
 
         main_frame = ttk.Frame(about_win, padding=20)
         main_frame.pack(expand=True, fill="both")
@@ -148,31 +173,33 @@ class App(ttk.Window):
         for i in self.tree.get_children():
             self.tree.delete(i)
 
-        ignore_dirs = ['node_modules', '.git', '.venv', '__pycache__']
-
-        def _has_md_files_recursive(dir_path):
-            for p in os.listdir(dir_path):
-                pt = os.path.join(dir_path, p)
-                if os.path.isdir(pt) and p not in ignore_dirs and not p.startswith('.'):
-                    if _has_md_files_recursive(pt):
-                        return True
-                elif p.endswith(".md"):
+    def _has_md_files_recursive(self, dir_path):
+        for p in os.listdir(dir_path):
+            pt = os.path.join(dir_path, p)
+            if os.path.isdir(pt) and p not in self.ignore_dirs and not p.startswith('.'):
+                if self._has_md_files_recursive(pt):
                     return True
-            return False
+            elif p.endswith(".md"):
+                return True
+        return False
 
-        def _populate_tree(parent, dir_path):
-            entries = sorted(os.listdir(dir_path), key=lambda x: (os.path.isfile(os.path.join(dir_path, x)), x))
-            for p in entries:
-                pt = os.path.join(dir_path, p)
-                if os.path.isdir(pt) and p not in ignore_dirs and not p.startswith('.'):
-                    if _has_md_files_recursive(pt):
-                        node = self.tree.insert(parent, "end", text=p, open=False)
-                        _populate_tree(node, pt)
-                elif p.endswith(".md"):
-                    self.tree.insert(parent, "end", text=p, values=[pt])
+    def _populate_tree_recursive(self, parent, dir_path):
+        entries = sorted(os.listdir(dir_path), key=lambda x: (os.path.isfile(os.path.join(dir_path, x)), x))
+        for p in entries:
+            pt = os.path.join(dir_path, p)
+            if os.path.isdir(pt) and p not in self.ignore_dirs and not p.startswith('.'):
+                if self._has_md_files_recursive(pt):
+                    node = self.tree.insert(parent, "end", text=p, open=False)
+                    self._populate_tree_recursive(node, pt)
+            elif p.endswith(".md"):
+                self.tree.insert(parent, "end", text=p, values=[pt])
+
+    def populate_tree(self, path):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
 
         root_node = self.tree.insert("", "end", text=os.path.basename(path), open=True, values=[path])
-        _populate_tree(root_node, path)
+        self._populate_tree_recursive(root_node, path)
 
     def on_tree_select(self, event):
         selected_item = self.tree.selection()
@@ -189,7 +216,6 @@ class App(ttk.Window):
                 md_content = f.read()
 
             # Process Mermaid diagrams first
-            import re
             mermaid_images = {}
             def replace_mermaid_block(match):
                 code = match.group(1)
@@ -210,7 +236,8 @@ class App(ttk.Window):
                     mermaid_images[placeholder] = f"data:image/png;base64,{img_base64}"
                     return f'<img src="{placeholder}">'
                 except Exception as e:
-                    return f"<pre>Mermaid Rendering Failed: {e}</pre>"
+                    print(f"Mermaid rendering failed: {e}") # Log the error for debugging
+                    return f"<pre>Error rendering Mermaid diagram. Please check the diagram syntax.<br>Details: {e}</pre>"
 
             md_content_with_placeholders = re.sub(r"```mermaid(.*?)```", replace_mermaid_block, md_content, flags=re.DOTALL)
             
@@ -225,6 +252,14 @@ class App(ttk.Window):
                 html_content = html_content.replace(f'src="{placeholder}"', f'src="{img_data}"')
 
             # Add GitHub-like styling
+            bg_color = "#303030" if self.theme_var.get() else "#ffffff"
+            text_color = "#f0f0f0" if self.theme_var.get() else "#24292e"
+            border_color = "#505050" if self.theme_var.get() else "#eaecef"
+            pre_bg_color = "#202020" if self.theme_var.get() else "#f6f8fa"
+            blockquote_color = "#909090" if self.theme_var.get() else "#6a737d"
+            blockquote_border_color = "#505050" if self.theme_var.get() else "#dfe2e5"
+
+
             styled_html = f"""
             <html>
             <head>
@@ -233,8 +268,8 @@ class App(ttk.Window):
                         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
                         font-size: {self.font_size}pt;
                         line-height: 1.6;
-                        color: #24292e;
-                        background-color: #ffffff;
+                        color: {text_color};
+                        background-color: {bg_color};
                         word-wrap: break-word;
                     }}
                     .container {{
@@ -248,19 +283,19 @@ class App(ttk.Window):
                         font-weight: 600;
                         line-height: 1.25;
                     }}
-                    h1 {{ font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: .3em;}}
-                    h2 {{ font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: .3em;}}
+                    h1 {{ font-size: 2em; border-bottom: 1px solid {border_color}; padding-bottom: .3em;}}
+                    h2 {{ font-size: 1.5em; border-bottom: 1px solid {border_color}; padding-bottom: .3em;}}
                     h3 {{ font-size: 1.25em; }}
                     a {{ color: #0366d6; text-decoration: none; }}
                     a:hover {{ text-decoration: underline; }}
-                    pre {{ background-color: #f6f8fa; padding: 16px; overflow: auto; font-size: 85%; line-height: 1.45; border-radius: 6px; }}
+                    pre {{ background-color: {pre_bg_color}; padding: 16px; overflow: auto; font-size: 85%; line-height: 1.45; border-radius: 6px; }}
                     code {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace; font-size: 85%; }}
                     pre > code {{ font-size: 100%; }}
                     table {{ border-collapse: collapse; width: 100%; display: block; overflow: auto;}}
-                    th, td {{ border: 1px solid #dfe2e5; padding: 6px 13px; }}
-                    th {{ font-weight: 600; background-color: #f6f8fa; }}
-                    img {{ max-width: 100%; height: auto; background-color: #ffffff; }}
-                    blockquote {{ color: #6a737d; border-left: .25em solid #dfe2e5; padding: 0 1em; margin-left: 0; }}
+                    th, td {{ border: 1px solid {border_color}; padding: 6px 13px; }}
+                    th {{ font-weight: 600; background-color: {pre_bg_color}; }}
+                    img {{ max-width: 100%; height: auto; background-color: {bg_color}; }}
+                    blockquote {{ color: {blockquote_color}; border-left: .25em solid {blockquote_border_color}; padding: 0 1em; margin-left: 0; }}
                 </style>
             </head>
             <body>
