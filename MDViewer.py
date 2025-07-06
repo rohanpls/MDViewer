@@ -22,6 +22,7 @@ class App(ttk.Window):
         self.title("MD Viewer")
         self.geometry("1200x800")
 
+        self.font_size = 12
         self.current_file_path = None
 
         # Set a larger default font for UI elements
@@ -97,10 +98,13 @@ class App(ttk.Window):
         minus_button.pack(side="left")
 
     def increase_font_size(self):
-        self.html_view.zoom_in()
+        self.font_size += 1
+        self.refresh_html_view()
 
     def decrease_font_size(self):
-        self.html_view.zoom_out()
+        if self.font_size > 6:
+            self.font_size -= 1
+            self.refresh_html_view()
 
     def refresh_html_view(self):
         if self.current_file_path:
@@ -227,6 +231,7 @@ class App(ttk.Window):
                 <style>
                     body {{
                         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+                        font-size: {self.font_size}pt;
                         line-height: 1.6;
                         color: #24292e;
                         background-color: #ffffff;
