@@ -104,8 +104,9 @@ class App(ttk.Window):
         self.tree.configure(yscrollcommand=tree_scrollbar.set)
         
         self.tree.pack(expand=True, fill="both", side="left")
-        self.tree.bind("<Double-1>", self.on_tree_select)
-        paned_window.add(tree_frame, weight=1)
+        self.tree.bind("<Double-1>", self.on_tree_double_click)
+        self.tree.bind("<Button-3>", self.on_tree_right_click)
+        paned_window.add(tree_frame, weight=0)
 
         # Right panel for the content
         content_frame = ttk.Frame(paned_window, padding="5")
@@ -115,7 +116,7 @@ class App(ttk.Window):
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_change)
         self.notebook.bind("<Button-3>", self.show_tab_context_menu)
 
-        paned_window.add(content_frame, weight=3)
+        paned_window.add(content_frame, weight=1)
 
         # Font size controls
         font_control_frame = ttk.Frame(content_frame)
@@ -310,23 +311,42 @@ class App(ttk.Window):
         root_node = self.tree.insert("", "end", text=os.path.basename(path), open=True, values=[path])
         self._populate_tree_recursive(root_node, path)
 
-    def on_tree_select(self, event):
+    def on_tree_double_click(self, event):
+        item_id = self.tree.identify_row(event.y)
+        if not item_id:
+            return
+
+        file_path_values = self.tree.item(item_id, "values")
+        if file_path_values and file_path_values[0].endswith(".md"):
+            self.show_single_view()
+            self.show_file_content(file_path_values[0])
+
+    def on_tree_right_click(self, event):
         selected_items = self.tree.selection()
+        if not selected_items:
+            return
+
         md_files = []
         for item in selected_items:
             file_path_values = self.tree.item(item, "values")
             if file_path_values and file_path_values[0].endswith(".md"):
-
                 md_files.append(file_path_values[0])
 
-        if len(md_files) == 2:
+        if not md_files:
+            return
 
-            self.show_split_view(md_files[0], md_files[1])
-        elif len(md_files) == 1:
-            self.show_single_view()
-            self.show_file_content(md_files[0])
-        else:
-            self.show_single_view() # Revert to single view if 0 or >2 files selected
+        context_menu = tk.Menu(self, tearoff=0)
+        if len(md_files) >= 1:
+            context_menu.add_command(label="Open", command=lambda: self.open_selected_files(md_files))
+        if len(md_files) == 2:
+            context_menu.add_command(label="Compare", command=lambda: self.show_split_view(md_files[0], md_files[1]))
+        
+        context_menu.post(event.x_root, event.y_root)
+
+    def open_selected_files(self, md_files):
+        self.show_single_view()
+        for file_path in md_files:
+            self.show_file_content(file_path)
 
     def show_split_view(self, file_path1, file_path2):
         # Hide the notebook
