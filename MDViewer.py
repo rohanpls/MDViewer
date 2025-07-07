@@ -122,11 +122,63 @@ class App(ttk.Window):
         font_control_frame = ttk.Frame(content_frame)
         font_control_frame.place(relx=1.0, rely=1.0, x=-10, y=-10, anchor="se")
 
+        self.edit_mode_var = tk.BooleanVar(value=False)
+        edit_mode_toggle = ttk.Checkbutton(
+            font_control_frame, 
+            text="Edit Mode", 
+            variable=self.edit_mode_var, 
+            command=self.toggle_edit_mode,
+            bootstyle="toolbutton"
+        )
+        edit_mode_toggle.pack(side="left", padx=5)
+
+        self.save_button = ttk.Button(
+            font_control_frame, 
+            text="Save", 
+            command=self.save_file, 
+            bootstyle="success"
+        )
+        self.cancel_button = ttk.Button(
+            font_control_frame,
+            text="Cancel",
+            command=self.cancel_edit,
+            bootstyle="danger"
+        )
+        # The save and cancel buttons will be shown/hidden in toggle_edit_mode
+
         plus_button = ttk.Button(font_control_frame, text="+", width=3, command=self.increase_font_size, bootstyle="secondary")
         plus_button.pack(side="left", padx=2)
 
         minus_button = ttk.Button(font_control_frame, text="-", width=3, command=self.decrease_font_size, bootstyle="secondary")
         minus_button.pack(side="left")
+
+    def toggle_edit_mode(self):
+        self.refresh_html_view() # This will now handle switching between editor and preview
+        if self.edit_mode_var.get():
+            self.save_button.pack(side="left", padx=5)
+            self.cancel_button.pack(side="left")
+        else:
+            self.save_button.pack_forget()
+            self.cancel_button.pack_forget()
+
+    def cancel_edit(self):
+        self.edit_mode_var.set(False)
+        self.toggle_edit_mode()
+
+    def save_file(self):
+        if self.current_file_path and self.edit_mode_var.get():
+            try:
+                info = self.open_files[self.current_file_path]
+                editor = info["editor"]
+                content = editor.get("1.0", "end-1c")
+                with open(self.current_file_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                # Clear the cache for this file to force a re-render on next preview
+                if self.current_file_path in self.html_cache:
+                    del self.html_cache[self.current_file_path]
+                messagebox.showinfo("Success", "File saved successfully!")
+            except (KeyError, tk.TclError) as e:
+                messagebox.showerror("Error", f"Failed to save file: {e}")
 
     def get_close_icon(self):
         # Create a simple 'x' icon for closing tabs
@@ -192,39 +244,133 @@ class App(ttk.Window):
 
     def increase_font_size(self):
         self.font_size += 1
-        self.refresh_html_view()
+        if self.edit_mode_var.get():
+            self._update_editor_font()
+        else:
+            self.html_cache.clear()
+            self.refresh_html_view()
 
     def decrease_font_size(self):
         if self.font_size > 6:
             self.font_size -= 1
-            self.refresh_html_view()
+            if self.edit_mode_var.get():
+                self._update_editor_font()
+            else:
+                self.html_cache.clear()
+                self.refresh_html_view()
+
+    def _update_editor_font(self):
+        if self.current_file_path and self.current_file_path in self.open_files:
+            try:
+                info = self.open_files[self.current_file_path]
+                if "editor" in info:
+                    info["editor"].config(font=("Segoe UI", self.font_size))
+            except (KeyError, tk.TclError) as e:
+                print(f"Error updating editor font: {e}")
 
     def refresh_html_view(self):
-        # For split view
-        if isinstance(self.current_file_path, list) and len(self.current_file_path) == 2:
-            self._load_content_into_frame(self.current_file_path[0], self.html_frame_left)
-            self._load_content_into_frame(self.current_file_path[1], self.html_frame_right)
-            return
+        if self.edit_mode_var.get():
+            self._show_editor()
+        else:
+            self._show_preview()
 
-        # For single tab view
+    def _show_editor(self):
         if self.current_file_path and self.current_file_path in self.open_files:
             try:
                 info = self.open_files[self.current_file_path]
                 tab_frame = info["tab_frame"]
+
+                # Hide preview, show editor
+                for widget in tab_frame.winfo_children():
+                    if isinstance(widget, HtmlFrame):
+                        widget.pack_forget()
                 
-                # Destroy existing HtmlFrame if it exists
+                if "editor" not in info:
+                    editor_frame = ttk.Frame(tab_frame)
+                    editor_frame.pack(expand=True, fill="both")
+                    
+                    self._create_editor_toolbar(editor_frame)
+
+                    editor = tk.Text(editor_frame, wrap="word", undo=True, font=("Segoe UI", self.font_size))
+                    editor.pack(expand=True, fill="both")
+                    
+                    info["editor"] = editor
+                    info["editor_frame"] = editor_frame
+                
+                info["editor_frame"].pack(expand=True, fill="both")
+                md_content = self._get_file_content(self.current_file_path)
+                info["editor"].delete("1.0", "end")
+                info["editor"].insert("1.0", md_content)
+
+            except (KeyError, tk.TclError) as e:
+                print(f"Error showing editor: {e}")
+
+    def _show_preview(self):
+        if self.current_file_path and self.current_file_path in self.open_files:
+            try:
+                info = self.open_files[self.current_file_path]
+                tab_frame = info["tab_frame"]
+
+                # Hide editor, show preview
+                if "editor_frame" in info:
+                    info["editor_frame"].pack_forget()
+
                 for widget in tab_frame.winfo_children():
                     if isinstance(widget, HtmlFrame):
                         widget.destroy()
 
-                # Create a new one
                 html_frame = HtmlFrame(tab_frame, messages_enabled=False)
                 html_frame.pack(expand=True, fill="both", side="bottom")
                 
                 self._load_content_into_frame(self.current_file_path, html_frame)
 
             except (KeyError, tk.TclError) as e:
-                print(f"Error refreshing view: {e}")
+                print(f"Error showing preview: {e}")
+
+    def _create_editor_toolbar(self, parent_frame):
+        toolbar = ttk.Frame(parent_frame, style="secondary.TFrame")
+        toolbar.pack(fill="x", side="top")
+
+        buttons = {
+            "H1": lambda: self._insert_md_tag("# "),
+            "H2": lambda: self._insert_md_tag("## "),
+            "H3": lambda: self._insert_md_tag("### "),
+            "Bold": lambda: self._wrap_md_tag("**"),
+            "Italic": lambda: self._wrap_md_tag("*"),
+            "Code": lambda: self._wrap_md_tag("`"),
+            "List": lambda: self._insert_md_tag("- "),
+            "Num List": lambda: self._insert_md_tag("1. "),
+            "Link": self._insert_link,
+            "Image": self._insert_image,
+        }
+
+        for text, command in buttons.items():
+            btn = ttk.Button(toolbar, text=text, command=command, bootstyle="light")
+            btn.pack(side="left", padx=2, pady=2)
+
+    def _insert_md_tag(self, tag):
+        editor = self.open_files[self.current_file_path]["editor"]
+        editor.insert("insert", tag)
+
+    def _wrap_md_tag(self, tag):
+        editor = self.open_files[self.current_file_path]["editor"]
+        try:
+            start = editor.index("sel.first")
+            end = editor.index("sel.last")
+            selected_text = editor.get(start, end)
+            editor.delete(start, end)
+            editor.insert(start, f"{tag}{selected_text}{tag}")
+        except tk.TclError:
+            # No selection, just insert the tags
+            editor.insert("insert", f"{tag}{tag}")
+
+    def _insert_link(self):
+        editor = self.open_files[self.current_file_path]["editor"]
+        editor.insert("insert", "[Link Text](http://example.com)")
+
+    def _insert_image(self):
+        editor = self.open_files[self.current_file_path]["editor"]
+        editor.insert("insert", "![Alt Text](http://example.com/image.png)")
 
     def on_tab_change(self, event):
         try:
